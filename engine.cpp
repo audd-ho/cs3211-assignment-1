@@ -3,6 +3,7 @@
 
 #include "io.hpp"
 #include "engine.hpp"
+#include "instrument.hpp"
 
 void Engine::accept(ClientConnection connection)
 {
@@ -12,6 +13,7 @@ void Engine::accept(ClientConnection connection)
 
 void Engine::connection_thread(ClientConnection connection)
 {
+	InstrumentsList order_book = InstrumentsList{};
 	while(true)
 	{
 		ClientCommand input {};
@@ -27,12 +29,28 @@ void Engine::connection_thread(ClientConnection connection)
 		switch(input.type)
 		{
 			case input_cancel: {
+				InstrumentOrder& instrument_OB = order_book.get_instrument_order(input.instrument);
+				instrument_OB.cancel_action(input);
+				/*
 				SyncCerr {} << "Got cancel: ID: " << input.order_id << std::endl;
 
 				// Remember to take timestamp at the appropriate time, or compute
 				// an appropriate timestamp!
 				auto output_time = getCurrentTimestamp();
 				Output::OrderDeleted(input.order_id, true, output_time);
+				*/
+				break;
+			}
+
+			case input_buy: {
+				InstrumentOrder& instrument_OB = order_book.get_instrument_order(input.instrument);
+				instrument_OB.buy_action(input);
+				break;
+			}
+
+			case input_sell: {
+				InstrumentOrder& instrument_OB = order_book.get_instrument_order(input.instrument);
+				instrument_OB.sell_action(input);
 				break;
 			}
 
