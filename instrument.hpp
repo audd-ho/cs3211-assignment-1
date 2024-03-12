@@ -44,7 +44,7 @@ public:
     //std::mutex diff_action_type;
     int try_execute(ClientCommand &input_order); // -1 if fail and int of remaining count left if succeed
     void add_order(ClientCommand &input_order);
-    bool try_cancel(int order_id);
+    bool try_cancel(u_int32_t order_id);
 };
 
 struct InstrumentOrder {
