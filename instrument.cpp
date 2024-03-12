@@ -241,8 +241,10 @@ void BSOrderList::add_order(ClientCommand &input_order){
 bool BSOrderList::try_cancel(u_int32_t order_id){
     //std::scoped_lock lock(same_action_type, diff_action_type);
     
-    spin_lock_same();
+    // pre-defined ordering to prevent deadlock!!
     lock_diff();
+    spin_lock_same();
+    
     OrderNode* cur_node = frontNode;
     //bool dummy_present = (frontNode->next == nullptr);
     //Output::OrderDeleted(666,dummy_present, 666);
