@@ -58,7 +58,7 @@ public:
 private:
     BSOrderList buy_order_list;
     BSOrderList sell_order_list;
-    std::atomic<int> timing;
+    //std::atomic<int> timing;
     //void fetch_add_time(); // to see
 };
 

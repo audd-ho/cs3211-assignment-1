@@ -81,8 +81,12 @@ int BSOrderList::try_execute(ClientCommand &input_order){
     while (diff_action_type.load(std::memory_order_acquire));
     diff_action_type.store(true, std::memory_order_release);
     */
+
+    // deadlock over this so i wanted to prevent by removing hold and wait, using computer networks probability method of collision avoidance!!
+    // BUT!! that is congestion solution, deadlock should just prevent it!! by having a predefined ordering!!!
+    lock_diff(); 
     spin_lock_same();
-    lock_diff();
+    
 
     //OrderNode* prev_node = nullptr;
     OrderNode* cur_node = frontNode;
@@ -262,7 +266,7 @@ bool BSOrderList::try_cancel(u_int32_t order_id){
 
 
 InstrumentOrder::InstrumentOrder(): buy_order_list{}, sell_order_list{}{
-    timing.store(0, std::memory_order_relaxed);
+    //timing.store(0, std::memory_order_relaxed);
 }
 
 InstrumentOrder::~InstrumentOrder(){} // need free or delete the lists? cos never "new" them... ??
