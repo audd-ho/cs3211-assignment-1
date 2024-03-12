@@ -109,15 +109,18 @@ int BSOrderList::try_execute(ClientCommand &input_order){
                     if ((*i)->od.price < lowest_price){
                         //lowest_price_order_ptr = nullptr;
                         lowest_price_index = cur_index;
+                        lowest_price = (*i)->od.price;
                     }
                     cur_index++;
                 }
+                //Output::OrderDeleted(lowest_price_index, false, lowest_price);
                 // remove from vector and also remove from LL or update reduce etc
                 OrderNode* lowest_price_order_node = executable_orders[lowest_price_index];
                 executable_orders.erase(executable_orders.begin()+lowest_price_index); 
                 if (input_order.count > lowest_price_order_node->od.count){
                     // take out from LL
-                    lowest_price_order_node->prev->next = lowest_price_order_node->next;
+                    if (lowest_price_order_node->prev == nullptr) {frontNode = lowest_price_order_node->next;}
+                    else {lowest_price_order_node->prev->next = lowest_price_order_node->next;}
                     lowest_price_order_node->next->prev = lowest_price_order_node->prev;
                     Output::OrderExecuted(lowest_price_order_node->od.order_id, input_order.order_id, lowest_price_order_node->od.executed_count, lowest_price_order_node->od.price, lowest_price_order_node->od.count, getCurrentTimestamp());
                     input_order.count = input_order.count-lowest_price_order_node->od.count;
@@ -128,7 +131,8 @@ int BSOrderList::try_execute(ClientCommand &input_order){
                     lowest_price_order_node->od.count = lowest_price_order_node->od.count - input_order.count;
                     // cleared along with order list resting order
                     if (lowest_price_order_node->od.count == 0){ // take out from LL if count == 0
-                        lowest_price_order_node->prev->next = lowest_price_order_node->next;
+                        if (lowest_price_order_node->prev == nullptr) {frontNode = lowest_price_order_node->next;}
+                        else {lowest_price_order_node->prev->next = lowest_price_order_node->next;}
                         lowest_price_order_node->next->prev = lowest_price_order_node->prev;
                     }
                     // cleared only active jsut came in order
@@ -160,6 +164,7 @@ int BSOrderList::try_execute(ClientCommand &input_order){
                     if ((*i)->od.price > highest_price){
                         //lowest_price_order_ptr = nullptr;
                         highest_price_index = cur_index;
+                        highest_price = (*i)->od.price;
                     }
                     cur_index++;
                 }
@@ -168,7 +173,8 @@ int BSOrderList::try_execute(ClientCommand &input_order){
                 executable_orders.erase(executable_orders.begin()+highest_price_index); 
                 if (input_order.count > highest_price_order_node->od.count){
                     // take out from LL
-                    highest_price_order_node->prev->next = highest_price_order_node->next;
+                    if (highest_price_order_node->prev == nullptr) {frontNode = highest_price_order_node->next;}
+                    else {highest_price_order_node->prev->next = highest_price_order_node->next;}
                     highest_price_order_node->next->prev = highest_price_order_node->prev;
                     Output::OrderExecuted(highest_price_order_node->od.order_id, input_order.order_id, highest_price_order_node->od.executed_count, highest_price_order_node->od.price, highest_price_order_node->od.count, getCurrentTimestamp());
                     input_order.count = input_order.count-highest_price_order_node->od.count;
@@ -179,7 +185,8 @@ int BSOrderList::try_execute(ClientCommand &input_order){
                     highest_price_order_node->od.count = highest_price_order_node->od.count - input_order.count;
                     // cleared along with order list resting order
                     if (highest_price_order_node->od.count == 0){ // take out from LL if count == 0
-                        highest_price_order_node->prev->next = highest_price_order_node->next;
+                        if (highest_price_order_node->prev == nullptr) {frontNode = highest_price_order_node->next;}
+                        else {highest_price_order_node->prev->next = highest_price_order_node->next;}
                         highest_price_order_node->next->prev = highest_price_order_node->prev;
                     }
                     // cleared only active jsut came in order
@@ -228,21 +235,28 @@ void BSOrderList::add_order(ClientCommand &input_order){
 
 bool BSOrderList::try_cancel(u_int32_t order_id){
     //std::scoped_lock lock(same_action_type, diff_action_type);
+    
     spin_lock_same();
     lock_diff();
     OrderNode* cur_node = frontNode;
+    //bool dummy_present = (frontNode->next == nullptr);
+    //Output::OrderDeleted(666,dummy_present, 666);
     while (cur_node->next != nullptr){
+        //Output::OrderDeleted(1212,false,121212);
         if (cur_node->od.order_id == order_id){
-            cur_node->prev->next = cur_node->next;
+            //Output::OrderDeleted(1212,false,121212);
+            if (cur_node->prev == nullptr) {frontNode=cur_node->next;}
+            else {cur_node->prev->next = cur_node->next;}
             cur_node->next->prev = cur_node->prev;
             Output::OrderDeleted(order_id, true, getCurrentTimestamp());
-            spin_lock_same();
-            lock_diff();
+            spin_unlock_same();
+            unlock_diff();
             return true;
         }
+        cur_node = cur_node->next;
     }
-    spin_lock_same();
-    lock_diff();
+    spin_unlock_same();
+    unlock_diff();
     return false; // not able to cancel cos no have, rejected the cancel
 }
 
@@ -265,6 +279,7 @@ void InstrumentOrder::buy_action(ClientCommand input){
     // fail to execute or rather, fail to fully execute, got remainder
     buy_order_list.add_order(input);
     buy_order_list.sema_decrement_diff(); // finish appending to buy order list
+    return;
 }
 
 void InstrumentOrder::sell_action(ClientCommand input){
@@ -276,14 +291,18 @@ void InstrumentOrder::sell_action(ClientCommand input){
     }
     // fail to execute or rather, fail to fully execute, got remainder
     sell_order_list.add_order(input);
-    sell_order_list.sema_increment_diff();
+    sell_order_list.sema_decrement_diff();
+    return;
 }
 
-void InstrumentOrder::cancel_action(ClientCommand input){
-    if (sell_order_list.try_cancel(input.order_id)) {return;}
-    if (buy_order_list.try_cancel(input.order_id)) {return;}
-    Output::OrderDeleted(input.order_id, false, getCurrentTimestamp());
+int InstrumentOrder::cancel_action(ClientCommand input){
+    if (sell_order_list.try_cancel(input.order_id)) {return 0;}
+    if (buy_order_list.try_cancel(input.order_id)) {return 0;}
+    //Output::OrderDeleted(99,false,123);
+    return -1;
 }
+
+
 
 // no need right actually?
 InstrumentsList::InstrumentsList(){
@@ -298,10 +317,24 @@ InstrumentsList::~InstrumentsList(){
     }
 }
 
-InstrumentOrder& InstrumentsList::get_instrument_order(std::string instrument){
-    std::scoped_lock lock(access_mutex);
-    if (instrument_map.find(instrument) == instrument_map.end()){
-        instrument_map[instrument] = new InstrumentOrder{};
+std::vector<std::string> InstrumentsList::get_names(){
+    std::vector<std::string> to_return_name_vector;
+    {
+        std::scoped_lock lock(vector_name_mutex);
+        to_return_name_vector = instrument_names;
     }
+    return to_return_name_vector;
+}
+
+InstrumentOrder& InstrumentsList::get_instrument_order(std::string instrument){
+    std::scoped_lock lock(access_mutex); // maybe can pull down or remove or combine with vector mutex...!!??
+
+    if (instrument_map.find(instrument) == instrument_map.end()){
+        std::scoped_lock lock(vector_name_mutex);
+        instrument_map[instrument] = new InstrumentOrder{};
+        instrument_names.push_back(instrument);
+        //count++;
+        }
+    //if (count == 2) {Output::OrderDeleted(676, false, 676);}
     return *(instrument_map[instrument]);
 }

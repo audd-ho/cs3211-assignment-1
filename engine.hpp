@@ -7,6 +7,7 @@
 #include <chrono>
 
 #include "io.hpp"
+#include "instrument.hpp"
 
 struct Engine
 {
