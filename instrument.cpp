@@ -101,7 +101,7 @@ int BSOrderList::try_execute(ClientCommand &input_order){
                 cur_node = cur_node->next;
             }
             while (executable_orders.size() > 0){
-                int lowest_price = input_order.price+1;
+                uint32_t lowest_price = input_order.price+1;
                 int lowest_price_index = -1;
                 int cur_index = 0;
                 //OrderNode* lowest_price_order_ptr = nullptr;
@@ -152,7 +152,7 @@ int BSOrderList::try_execute(ClientCommand &input_order){
                 cur_node = cur_node->next;
             }
             while (executable_orders.size() > 0){
-                int highest_price = input_order.price-1;
+                uint32_t highest_price = input_order.price-1;
                 int highest_price_index = -1;
                 int cur_index = 0;
                 //OrderNode* lowest_price_order_ptr = nullptr;
@@ -194,10 +194,10 @@ int BSOrderList::try_execute(ClientCommand &input_order){
             return -1; // didnt manage to execute at all, so need add to order list as resting order
         }
         default:
-            printf("error, idk: ",input_order);
+            printf("error, idk: ",input_order.order_id);
             spin_unlock_same();
             unlock_diff();
-            break;
+            return -10;
     }
 
     /*
@@ -288,16 +288,20 @@ void InstrumentOrder::cancel_action(ClientCommand input){
 // no need right actually?
 InstrumentsList::InstrumentsList(){
     std::map<std::string,InstrumentOrder> instrument_map;
-    std::atomic<bool> accessible;
+    //std::atomic<bool> accessible;
     std::mutex access_mutex; 
 }
 
-InstrumentsList::~InstrumentsList(){}
+InstrumentsList::~InstrumentsList(){
+    for (auto iter = instrument_map.begin(); iter != instrument_map.end(); iter++){
+        delete(iter->second);
+    }
+}
 
 InstrumentOrder& InstrumentsList::get_instrument_order(std::string instrument){
     std::scoped_lock lock(access_mutex);
     if (instrument_map.find(instrument) == instrument_map.end()){
-        instrument_map[instrument] = &InstrumentOrder{};
+        instrument_map[instrument] = new InstrumentOrder{};
     }
     return *(instrument_map[instrument]);
 }
