@@ -84,7 +84,8 @@ int BSOrderList::try_execute(ClientCommand &input_order){
 
     // deadlock over this so i wanted to prevent by removing hold and wait, using computer networks probability method of collision avoidance!!
     // BUT!! that is congestion solution, deadlock should just prevent it!! by having a predefined ordering!!!
-    lock_diff(); 
+
+    //lock_diff(); 
     spin_lock_same();
     
 
@@ -271,10 +272,17 @@ InstrumentOrder::InstrumentOrder(): buy_order_list{}, sell_order_list{}{
 
 InstrumentOrder::~InstrumentOrder(){} // need free or delete the lists? cos never "new" them... ??
 
+
+// buy order lock before sell order lock, using pre-defined locking order to prevent deadlock!!, and unlock from within try_execute cos i cheeky... heh
+// ALSO!! the lock is diff in buy and sell action, see that buy is locked first but locked differently
+// sell is locked 2nd but also locked differently since the type of locking matters to enable better concurrency!! (-1 from 0) or (+1 from >=0) to enable more concurrency cos can write somewhat more concurrently!!
+
+
 void InstrumentOrder::buy_action(ClientCommand input){
     // prevent buy order diff sema from dropping to <0 [read/execute state]
     // keep it at >0 [write/append state]
     buy_order_list.sema_increment_diff(); // may need to append to buy order list later
+    sell_order_list.lock_diff();
     int buying_result = sell_order_list.try_execute(input);
     if (buying_result == 0){ // succeed and done!
         buy_order_list.sema_decrement_diff(); // no need append so decrement diff sema, let others use or just mark its absence/no need anymore
@@ -287,6 +295,7 @@ void InstrumentOrder::buy_action(ClientCommand input){
 }
 
 void InstrumentOrder::sell_action(ClientCommand input){
+    buy_order_list.lock_diff();
     sell_order_list.sema_increment_diff();
     int selling_result = buy_order_list.try_execute(input);
     if (selling_result == 0){ // succeed and done!
