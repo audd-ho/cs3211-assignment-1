@@ -1,0 +1,367 @@
+[1mdiff --git a/engine.cpp b/engine.cpp[m
+[1mindex ed24a1f..8a3ee43 100644[m
+[1m--- a/engine.cpp[m
+[1m+++ b/engine.cpp[m
+[36m@@ -3,6 +3,7 @@[m
+ [m
+ #include "io.hpp"[m
+ #include "engine.hpp"[m
+[32m+[m[32m#include "instrument.hpp"[m
+ [m
+ void Engine::accept(ClientConnection connection)[m
+ {[m
+[36m@@ -12,6 +13,7 @@[m [mvoid Engine::accept(ClientConnection connection)[m
+ [m
+ void Engine::connection_thread(ClientConnection connection)[m
+ {[m
+[32m+[m	[32mInstrumentsList order_book = InstrumentsList{};[m
+ 	while(true)[m
+ 	{[m
+ 		ClientCommand input {};[m
+[36m@@ -27,12 +29,28 @@[m [mvoid Engine::connection_thread(ClientConnection connection)[m
+ 		switch(input.type)[m
+ 		{[m
+ 			case input_cancel: {[m
+[32m+[m				[32mInstrumentOrder& instrument_OB = order_book.get_instrument_order(input.instrument);[m
+[32m+[m				[32minstrument_OB.cancel_action(input);[m
+[32m+[m				[32m/*[m
+ 				SyncCerr {} << "Got cancel: ID: " << input.order_id << std::endl;[m
+ [m
+ 				// Remember to take timestamp at the appropriate time, or compute[m
+ 				// an appropriate timestamp![m
+ 				auto output_time = getCurrentTimestamp();[m
+ 				Output::OrderDeleted(input.order_id, true, output_time);[m
+[32m+[m				[32m*/[m
+[32m+[m				[32mbreak;[m
+[32m+[m			[32m}[m
+[32m+[m
+[32m+[m			[32mcase input_buy: {[m
+[32m+[m				[32mInstrumentOrder& instrument_OB = order_book.get_instrument_order(input.instrument);[m
+[32m+[m				[32minstrument_OB.buy_action(input);[m
+[32m+[m				[32mbreak;[m
+[32m+[m			[32m}[m
+[32m+[m
+[32m+[m			[32mcase input_sell: {[m
+[32m+[m				[32mInstrumentOrder& instrument_OB = order_book.get_instrument_order(input.instrument);[m
+[32m+[m				[32minstrument_OB.sell_action(input);[m
+ 				break;[m
+ 			}[m
+ [m
+[1mdiff --git a/instrument.cpp b/instrument.cpp[m
+[1mnew file mode 100644[m
+[1mindex 0000000..a8f3b41[m
+[1m--- /dev/null[m
+[1m+++ b/instrument.cpp[m
+[36m@@ -0,0 +1,303 @@[m
+[32m+[m[32m#include "instrument.hpp"[m
+[32m+[m[32m#include "io.hpp"[m
+[32m+[m[32m#include "engine.hpp"[m
+[32m+[m
+[32m+[m[32m#include <vector>[m
+[32m+[m
+[32m+[m[32mBSOrderList::BSOrderList(){[m
+[32m+[m[32m    OrderNode *initial_dummy_node = new OrderNode{};[m
+[32m+[m[32m    frontNode = initial_dummy_node;[m
+[32m+[m[32m    lastNode = initial_dummy_node;[m
+[32m+[m[32m    /*[m
+[32m+[m[32m    same_action_type.store(false, std::memory_order_relaxed);[m
+[32m+[m[32m    diff_action_type.store(false, std::memory_order_relaxed);[m
+[32m+[m[32m    */[m
+[32m+[m[32m}[m
+[32m+[m[32mBSOrderList::~BSOrderList(){[m
+[32m+[m[32m    OrderNode* cur_node = frontNode;[m
+[32m+[m[32m    while (cur_node != nullptr){[m
+[32m+[m[32m        OrderNode* prev_node = cur_node;[m
+[32m+[m[32m        cur_node = cur_node->next;[m
+[32m+[m[32m        delete(prev_node);[m
+[32m+[m[32m    } // need free self? huh? idkkkk[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mvoid BSOrderList::sema_increment_diff(){[m
+[32m+[m[32m    int sema_old_val = diff_action_type.load();[m
+[32m+[m[32m    while (true){[m
+[32m+[m[32m        int sema_new_val = sema_old_val+1;[m
+[32m+[m[32m        if (diff_action_type.compare_exchange_weak(sema_old_val, sema_new_val))[m
+[32m+[m[32m        {if (sema_old_val >= 0) {return;}}[m
+[32m+[m[32m    }[m
+[32m+[m[32m}[m
+[32m+[m[32mvoid BSOrderList::sema_decrement_diff(){[m
+[32m+[m[32m    int sema_old_val = diff_action_type.load();[m
+[32m+[m[32m    while (true){[m
+[32m+[m[32m        int sema_new_val = sema_old_val-1;[m
+[32m+[m[32m        if (diff_action_type.compare_exchange_weak(sema_old_val, sema_new_val))[m
+[32m+[m[32m        {return;}[m
+[32m+[m[32m    }[m
+[32m+[m[32m}[m
+[32m+[m[32mvoid BSOrderList::lock_diff(){[m
+[32m+[m[32m    int pre_lock_val = 0;[m
+[32m+[m[32m    int locked_val = -1;[m
+[32m+[m[32m    while (true){[m
+[32m+[m[32m        if (diff_action_type.compare_exchange_weak(pre_lock_val, locked_val))[m
+[32m+[m[32m        {return;}[m
+[32m+[m[32m        pre_lock_val = 0;[m
+[32m+[m[32m    }[m
+[32m+[m[32m}[m
+[32m+[m[32mvoid BSOrderList::unlock_diff(){ // only one that can increment it so technically no need loop etc(?)[m
+[32m+[m[32m    // unlocked to 0[m
+[32m+[m[32m    diff_action_type.store(0);[m
+[32m+[m[32m    /*[m
+[32m+[m[32m    int locked_val = -1;[m
+[32m+[m[32m    int post_unlocked_val = 0;[m
+[32m+[m[32m    while (true){[m
+[32m+[m[32m        if (diff_action_type.compare_exchange_weak(locked_val, post_unlocked_val))[m
+[32m+[m[32m        {return;}[m
+[32m+[m[32m        locked_val = -1;[m
+[32m+[m[32m    }[m
+[32m+[m[32m    */[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mvoid BSOrderList::spin_lock_same(){[m
+[32m+[m[32m    bool pre_lock_val = false;[m
+[32m+[m[32m    bool locked_val = true;[m
+[32m+[m[32m    while(true){[m
+[32m+[m[32m        if (same_action_type.compare_exchange_weak(pre_lock_val,locked_val))[m
+[32m+[m[32m        {return;}[m
+[32m+[m[32m        pre_lock_val = false;[m
+[32m+[m[32m    }[m
+[32m+[m[32m}[m
+[32m+[m[32mvoid BSOrderList::spin_unlock_same(){[m
+[32m+[m[32m    same_action_type.store(false);[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mint BSOrderList::try_execute(ClientCommand &input_order){[m
+[32m+[m[32m    // chance of deadlock?[m
+[32m+[m[32m    /*[m
+[32m+[m[32m    same_action_type.compare_exchange_weak( false, true);[m
+[32m+[m[32m    while (diff_action_type.load(std::memory_order_acquire));[m
+[32m+[m[32m    diff_action_type.store(true, std::memory_order_release);[m
+[32m+[m[32m    */[m
+[32m+[m[32m    spin_lock_same();[m
+[32m+[m[32m    lock_diff();[m
+[32m+[m
+[32m+[m[32m    //OrderNode* prev_node = nullptr;[m
+[32m+[m[32m    OrderNode* cur_node = frontNode;[m
+[32m+[m
+[32m+[m[32m    std::vector<OrderNode*> executable_orders;[m
+[32m+[m[32m    //check if available[m
+[32m+[m[32m    // price then[m[41m [m
+[32m+[m[32m    switch (input_order.type){[m
+[32m+[m[32m        case (input_buy): // means this is try executing on a sell order list[m
+[32m+[m[32m        {[m
+[32m+[m[32m            while(cur_node->next != nullptr){[m
+[32m+[m[32m                if (cur_node->od.price <= input_order.price){[m
+[32m+[m[32m                    executable_orders.push_back(cur_node);[m
+[32m+[m[32m                }[m
+[32m+[m[32m                //prev_node = cur_node;[m
+[32m+[m[32m                cur_node = cur_node->next;[m
+[32m+[m[32m            }[m
+[32m+[m[32m            while (executable_orders.size() > 0){[m
+[32m+[m[32m                int lowest_price = input_order.price+1;[m
+[32m+[m[32m                int lowest_price_index = -1;[m
+[32m+[m[32m                int cur_index = 0;[m
+[32m+[m[32m                //OrderNode* lowest_price_order_ptr = nullptr;[m
+[32m+[m[32m                for (auto i = executable_orders.begin(); i != executable_orders.end(); ++i){[m
+[32m+[m[32m                    if ((*i)->od.price < lowest_price){[m
+[32m+[m[32m                        //lowest_price_order_ptr = nullptr;[m
+[32m+[m[32m                        lowest_price_index = cur_index;[m
+[32m+[m[32m                    }[m
+[32m+[m[32m                    cur_index++;[m
+[32m+[m[32m                }[m
+[32m+[m[32m                // remove from vector and also remove from LL or update reduce etc[m
+[32m+[m[32m                OrderNode* lowest_price_order_node = executable_orders[lowest_price_index];[m
+[32m+[m[32m                executable_orders.erase(executable_orders.begin()+lowest_price_index);[m[41m [m
+[32m+[m[32m                if (input_order.count > lowest_price_order_node->od.count){[m
+[32m+[m[32m                    // take out from LL[m
+[32m+[m[32m                    lowest_price_order_node->prev->next = lowest_price_order_node->next;[m
+[32m+[m[32m                    lowest_price_order_node->next->prev = lowest_price_order_node->prev;[m
+[32m+[m[32m                    Output::OrderExecuted(lowest_price_order_node->od.order_id, input_order.order_id, lowest_price_order_node->od.executed_count, lowest_price_order_node->od.price, lowest_price_order_node->od.count, getCurrentTimestamp());[m
+[32m+[m[32m                    input_order.count = input_order.count-lowest_price_order_node->od.count;[m
+[32m+[m[32m                    continue;[m
+[32m+[m[32m                }[m
+[32m+[m[32m                else { // <=[m
+[32m+[m[32m                    Output::OrderExecuted(lowest_price_order_node->od.order_id, input_order.order_id, lowest_price_order_node->od.executed_count, lowest_price_order_node->od.price, input_order.count, getCurrentTimestamp());[m
+[32m+[m[32m                    lowest_price_order_node->od.count = lowest_price_order_node->od.count - input_order.count;[m
+[32m+[m[32m                    // cleared along with order list resting order[m
+[32m+[m[32m                    if (lowest_price_order_node->od.count == 0){ // take out from LL if count == 0[m
+[32m+[m[32m                        lowest_price_order_node->prev->next = lowest_price_order_node->next;[m
+[32m+[m[32m                        lowest_price_order_node->next->prev = lowest_price_order_node->prev;[m
+[32m+[m[32m                    }[m
+[32m+[m[32m                    // cleared only active jsut came in order[m
+[32m+[m[32m                    else {(lowest_price_order_node->od.executed_count)++;} // else, only increment executed count and reduce count left[m
+[32m+[m[32m                    spin_unlock_same();[m
+[32m+[m[32m                    unlock_diff();[m
+[32m+[m[32m                    return 0; // successfully finished the active order that just came in[m
+[32m+[m[32m                }[m
+[32m+[m[32m            }[m
+[32m+[m[32m            spin_unlock_same();[m
+[32m+[m[32m            unlock_diff();[m
+[32m+[m[32m            return -1; // didnt manage to execute at all, so need add to order list as resting order[m
+[32m+[m[32m        }[m
+[32m+[m[32m        case (input_sell):[m
+[32m+[m[32m        {[m
+[32m+[m[32m            while(cur_node->next != nullptr){[m
+[32m+[m[32m                if (cur_node->od.price >= input_order.price){[m
+[32m+[m[32m                    executable_orders.push_back(cur_node);[m
+[32m+[m[32m                }[m
+[32m+[m[32m                //prev_node = cur_node;[m
+[32m+[m[32m                cur_node = cur_node->next;[m
+[32m+[m[32m            }[m
+[32m+[m[32m            while (executable_orders.size() > 0){[m
+[32m+[m[32m                int highest_price = input_order.price-1;[m
+[32m+[m[32m                int highest_price_index = -1;[m
+[32m+[m[32m                int cur_index = 0;[m
+[32m+[m[32m                //OrderNode* lowest_price_order_ptr = nullptr;[m
+[32m+[m[32m                for (auto i = executable_orders.begin(); i != executable_orders.end(); ++i){[m
+[32m+[m[32m                    if ((*i)->od.price > highest_price){[m
+[32m+[m[32m                        //lowest_price_order_ptr = nullptr;[m
+[32m+[m[32m                        highest_price_index = cur_index;[m
+[32m+[m[32m                    }[m
+[32m+[m[32m                    cur_index++;[m
+[32m+[m[32m                }[m
+[32m+[m[32m                // remove from vector and also remove from LL or update reduce etc[m
+[32m+[m[32m                OrderNode* highest_price_order_node = executable_orders[highest_price_index];[m
+[32m+[m[32m                executable_orders.erase(executable_orders.begin()+highest_price_index);[m[41m [m
+[32m+[m[32m                if (input_order.count > highest_price_order_node->od.count){[m
+[32m+[m[32m                    // take out from LL[m
+[32m+[m[32m                    highest_price_order_node->prev->next = highest_price_order_node->next;[m
+[32m+[m[32m                    highest_price_order_node->next->prev = highest_price_order_node->prev;[m
+[32m+[m[32m                    Output::OrderExecuted(highest_price_order_node->od.order_id, input_order.order_id, highest_price_order_node->od.executed_count, highest_price_order_node->od.price, highest_price_order_node->od.count, getCurrentTimestamp());[m
+[32m+[m[32m                    input_order.count = input_order.count-highest_price_order_node->od.count;[m
+[32m+[m[32m                    continue;[m
+[32m+[m[32m                }[m
+[32m+[m[32m                else { // <=[m
+[32m+[m[32m                    Output::OrderExecuted(highest_price_order_node->od.order_id, input_order.order_id, highest_price_order_node->od.executed_count, highest_price_order_node->od.price, input_order.count, getCurrentTimestamp());[m
+[32m+[m[32m                    highest_price_order_node->od.count = highest_price_order_node->od.count - input_order.count;[m
+[32m+[m[32m                    // cleared along with order list resting order[m
+[32m+[m[32m                    if (highest_price_order_node->od.count == 0){ // take out from LL if count == 0[m
+[32m+[m[32m                        highest_price_order_node->prev->next = highest_price_order_node->next;[m
+[32m+[m[32m                        highest_price_order_node->next->prev = highest_price_order_node->prev;[m
+[32m+[m[32m                    }[m
+[32m+[m[32m                    // cleared only active jsut came in order[m
+[32m+[m[32m                    else {(highest_price_order_node->od.executed_count)++;} // else, only increment executed count and reduce count left[m
+[32m+[m[32m                    spin_unlock_same();[m
+[32m+[m[32m                    unlock_diff();[m
+[32m+[m[32m                    return 0; // successfully finished the active order that just came in[m
+[32m+[m[32m                }[m
+[32m+[m[32m            }[m
+[32m+[m[32m            spin_unlock_same();[m
+[32m+[m[32m            unlock_diff();[m
+[32m+[m[32m            return -1; // didnt manage to execute at all, so need add to order list as resting order[m
+[32m+[m[32m        }[m
+[32m+[m[32m        default:[m
+[32m+[m[32m            printf("error, idk: ",input_order);[m
+[32m+[m[32m            spin_unlock_same();[m
+[32m+[m[32m            unlock_diff();[m
+[32m+[m[32m            break;[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    /*[m
+[32m+[m[32m    same_action_type.store(false, std::memory_order_release);[m
+[32m+[m[32m    diff_action_type.store(false, std::memory_order_release);[m
+[32m+[m[32m    */[m
+[32m+[m[32m}[m
+[32m+[m[32mvoid BSOrderList::add_order(ClientCommand &input_order){[m
+[32m+[m[32m    //std::scoped_lock lock(diff_action_type); // cant add while doing opposite action type[m
+[32m+[m[32m    // can write 2 at once, but the add dummy node has to lock for a bit[m
+[32m+[m
+[32m+[m[32m    // reached here means incremented semaphore! and old sema_value is >= 0, so can access either cos 0 or alr got someone accessing![m
+[32m+[m[32m    OrderNode* node_to_work_with;[m[41m [m
+[32m+[m[32m    {[m
+[32m+[m[32m        std::scoped_lock lock(addOrder_mutex); // lock to add new node, then others can add also now[m
+[32m+[m[32m        node_to_work_with = lastNode;[m
+[32m+[m[32m        lastNode = new OrderNode{};[m
+[32m+[m[32m        node_to_work_with->next = lastNode;[m
+[32m+[m[32m        lastNode->prev = node_to_work_with;[m
+[32m+[m[32m        Output::OrderAdded(input_order.order_id, input_order.instrument, input_order.price, input_order.count, input_order.type == input_sell, getCurrentTimestamp());[m
+[32m+[m[32m        //fetch_add_time(some)[m
+[32m+[m[32m    }[m
+[32m+[m[32m    node_to_work_with->od.executed_count = 1;[m
+[32m+[m[32m    node_to_work_with->od.count = input_order.count;[m
+[32m+[m[32m    node_to_work_with->od.order_id = input_order.order_id;[m
+[32m+[m[32m    node_to_work_with->od.price = input_order.price;[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mbool BSOrderList::try_cancel(int order_id){[m
+[32m+[m[32m    //std::scoped_lock lock(same_action_type, diff_action_type);[m
+[32m+[m[32m    spin_lock_same();[m
+[32m+[m[32m    lock_diff();[m
+[32m+[m[32m    OrderNode* cur_node = frontNode;[m
+[32m+[m[32m    while (cur_node->next != nullptr){[m
+[32m+[m[32m        if (cur_node->od.order_id == order_id){[m
+[32m+[m[32m            cur_node->prev->next = cur_node->next;[m
+[32m+[m[32m            cur_node->next->prev = cur_node->prev;[m
+[32m+[m[32m            Output::OrderDeleted(order_id, true, getCurrentTimestamp());[m
+[32m+[m[32m            spin_lock_same();[m
+[32m+[m[32m            lock_diff();[m
+[32m+[m[32m            return true;[m
+[32m+[m[32m        }[m
+[32m+[m[32m    }[m
+[32m+[m[32m    spin_lock_same();[m
+[32m+[m[32m    lock_diff();[m
+[32m+[m[32m    return false; // not able to cancel cos no have, rejected the cancel[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m
+[32m+[m[32mInstrumentOrder::InstrumentOrder(): buy_order_list{}, sell_order_list{}{[m
+[32m+[m[32m    timing.store(0, std::memory_order_relaxed);[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mInstrumentOrder::~InstrumentOrder(){} // need free or delete the lists? cos never "new" them... ??[m
+[32m+[m
+[32m+[m[32mvoid InstrumentOrder::buy_action(ClientCommand input){[m
+[32m+[m[32m    // prevent buy order diff sema from dropping to <0 [read/execute state][m
+[32m+[m[32m    // keep it at >0 [write/append state][m
+[32m+[m[32m    buy_order_list.sema_increment_diff(); // may need to append to buy order list later[m
+[32m+[m[32m    int buying_result = sell_order_list.try_execute(input);[m
+[32m+[m[32m    if (buying_result == 0){ // succeed and done![m
+[32m+[m[32m        buy_order_list.sema_decrement_diff(); // no need append so decrement diff sema, let others use or just mark its absence/no need anymore[m
+[32m+[m[32m        return;[m
+[32m+[m[32m    }[m
+[32m+[m[32m    // fail to execute or rather, fail to fully execute, got remainder[m
+[32m+[m[32m    buy_order_list.add_order(input);[m
+[32m+[m[32m    buy_order_list.sema_decrement_diff(); // finish appending to buy order list[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mvoid InstrumentOrder::sell_action(ClientCommand input){[m
+[32m+[m[32m    sell_order_list.sema_increment_diff();[m
+[32m+[m[32m    int selling_result = buy_order_list.try_execute(input);[m
+[32m+[m[32m    if (selling_result == 0){ // succeed and done![m
+[32m+[m[32m        sell_order_list.sema_decrement_diff();[m
+[32m+[m[32m        return;[m
+[32m+[m[32m    }[m
+[32m+[m[32m    // fail to execute or rather, fail to fully execute, got remainder[m
+[32m+[m[32m    sell_order_list.add_order(input);[m
+[32m+[m[32m    sell_order_list.sema_increment_diff();[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mvoid InstrumentOrder::cancel_action(ClientCommand input){[m
+[32m+[m[32m    if (sell_order_list.try_cancel(input.order_id)) {return;}[m
+[32m+[m[32m    if (buy_order_list.try_cancel(input.order_id)) {return;}[m
+[32m+[m[32m    Output::OrderDeleted(input.order_id, false, getCurrentTimestamp());[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32m// no need right actually?[m
+[32m+[m[32mInstrumentsList::InstrumentsList(){[m
+[32m+[m[32m    std::map<std::string,InstrumentOrder> instrument_map;[m
+[32m+[m[32m    std::atomic<bool> accessible;[m
+[32m+[m[32m    std::mutex access_mutex;[m[41m [m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mInstrumentsList::~InstrumentsList(){}[m
+[32m+[m
+[32m+[m[32mInstrumentOrder& InstrumentsList::get_instrument_order(std::string instrument){[m
+[32m+[m[32m    std::scoped_lock lock(access_mutex);[m
+[32m+[m[32m    if (instrument_map.find(instrument) == instrument_map.end()){[m
+[32m+[m[32m        instrument_map[instrument] = &InstrumentOrder{};[m
+[32m+[m[32m    }[m
+[32m+[m[32m    return *(instrument_map[instrument]);[m
+[32m+[m[32m}[m
+\ No newline at end of file[m
+[1mdiff --git a/instrument.hpp b/instrument.hpp[m
+[1mnew file mode 100644[m
+[1mindex 0000000..58520d9[m
+[1m--- /dev/null[m
+[1m+++ b/instrument.hpp[m
+[36m@@ -0,0 +1,76 @@[m
+[32m+[m[32m#ifndef INSTRUMENT_HPP[m
+[32m+[m[32m#define INSTRUME
