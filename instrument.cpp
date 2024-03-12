@@ -194,7 +194,7 @@ int BSOrderList::try_execute(ClientCommand &input_order){
             return -1; // didnt manage to execute at all, so need add to order list as resting order
         }
         default:
-            printf("error, idk: ",input_order.order_id);
+            printf("error, idk: %d",input_order.order_id);
             spin_unlock_same();
             unlock_diff();
             return -10;
@@ -226,7 +226,7 @@ void BSOrderList::add_order(ClientCommand &input_order){
     node_to_work_with->od.price = input_order.price;
 }
 
-bool BSOrderList::try_cancel(int order_id){
+bool BSOrderList::try_cancel(u_int32_t order_id){
     //std::scoped_lock lock(same_action_type, diff_action_type);
     spin_lock_same();
     lock_diff();
@@ -287,9 +287,9 @@ void InstrumentOrder::cancel_action(ClientCommand input){
 
 // no need right actually?
 InstrumentsList::InstrumentsList(){
-    std::map<std::string,InstrumentOrder> instrument_map;
-    //std::atomic<bool> accessible;
-    std::mutex access_mutex; 
+    //std::map<std::string,InstrumentOrder> instrument_map;
+    ////std::atomic<bool> accessible;
+    //std::mutex access_mutex; 
 }
 
 InstrumentsList::~InstrumentsList(){
