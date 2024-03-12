@@ -5,6 +5,7 @@
 #include <string>
 #include <atomic>
 #include <mutex>
+#include <vector>
 #include "io.hpp"
 
 class BSOrderList
@@ -53,7 +54,7 @@ public:
     ~InstrumentOrder();
     void buy_action(ClientCommand input); // count, price, id, details
     void sell_action(ClientCommand input);
-    void cancel_action(ClientCommand input);
+    int cancel_action(ClientCommand input);
 private:
     BSOrderList buy_order_list;
     BSOrderList sell_order_list;
@@ -67,9 +68,14 @@ public:
     InstrumentsList();
     ~InstrumentsList();
     InstrumentOrder& get_instrument_order(std::string instrument);
+    std::vector<std::string> get_names();
 private:
     std::map<std::string,InstrumentOrder*> instrument_map;
     std::mutex access_mutex;
+
+    std::vector<std::string> instrument_names;
+    std::mutex vector_name_mutex;
+    //int count = 0;
 };
 
 

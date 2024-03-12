@@ -1,5 +1,6 @@
 #include <iostream>
 #include <thread>
+#include <vector>
 
 #include "io.hpp"
 #include "engine.hpp"
@@ -11,9 +12,10 @@ void Engine::accept(ClientConnection connection)
 	thread.detach();
 }
 
+InstrumentsList* order_book_ptr = new InstrumentsList{};
+
 void Engine::connection_thread(ClientConnection connection)
-{
-	InstrumentsList order_book = InstrumentsList{};
+{	
 	while(true)
 	{
 		ClientCommand input {};
@@ -26,11 +28,22 @@ void Engine::connection_thread(ClientConnection connection)
 
 		// Functions for printing output actions in the prescribed format are
 		// provided in the Output class:
+		
 		switch(input.type)
 		{
 			case input_cancel: {
-				InstrumentOrder& instrument_OB = order_book.get_instrument_order(input.instrument);
-				instrument_OB.cancel_action(input);
+				//printf("Canceled order! %d\n", input.order_id);
+				//Output::OrderDeleted(99,false,123);
+				int cancelled = -1;
+				std::vector<std::string> vector_instruments = order_book_ptr->get_names();
+				for (auto i_names = vector_instruments.begin(); i_names != vector_instruments.end(); ++i_names)
+				{
+					InstrumentOrder& instrument_OB = order_book_ptr->get_instrument_order((*i_names));
+					cancelled = instrument_OB.cancel_action(input);
+					//Output::OrderAdded(cancelled,(*i_names).c_str(), 666,666,666,666);
+					if (cancelled == 0) {break;}
+				}
+				if (cancelled == -1) {Output::OrderDeleted(input.order_id, false, getCurrentTimestamp());}
 				/*
 				SyncCerr {} << "Got cancel: ID: " << input.order_id << std::endl;
 
@@ -43,13 +56,13 @@ void Engine::connection_thread(ClientConnection connection)
 			}
 
 			case input_buy: {
-				InstrumentOrder& instrument_OB = order_book.get_instrument_order(input.instrument);
+				InstrumentOrder& instrument_OB = order_book_ptr->get_instrument_order(input.instrument);
 				instrument_OB.buy_action(input);
 				break;
 			}
 
 			case input_sell: {
-				InstrumentOrder& instrument_OB = order_book.get_instrument_order(input.instrument);
+				InstrumentOrder& instrument_OB = order_book_ptr->get_instrument_order(input.instrument);
 				instrument_OB.sell_action(input);
 				break;
 			}
@@ -67,7 +80,7 @@ void Engine::connection_thread(ClientConnection connection)
 				break;
 			}
 		}
-
+		/*
 		// Additionally:
 
 		// Remember to take timestamp at the appropriate time, or compute
@@ -76,5 +89,6 @@ void Engine::connection_thread(ClientConnection connection)
 
 		// Check the parameter names in `io.hpp`.
 		Output::OrderExecuted(123, 124, 1, 2000, 10, output_time);
+		*/
 	}
 }
