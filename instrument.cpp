@@ -283,30 +283,37 @@ InstrumentOrder::~InstrumentOrder(){} // need free or delete the lists? cos neve
 void InstrumentOrder::buy_action(ClientCommand input){
     // prevent buy order diff sema from dropping to <0 [read/execute state]
     // keep it at >0 [write/append state]
-    buy_order_list.sema_increment_diff(); // may need to append to buy order list later
+    ///buy_order_list.sema_increment_diff(); // may need to append to buy order list later
+    buy_order_list.lock_diff();
+
     sell_order_list.lock_diff();
     int buying_result = sell_order_list.try_execute(input);
     if (buying_result == 0){ // succeed and done!
-        buy_order_list.sema_decrement_diff(); // no need append so decrement diff sema, let others use or just mark its absence/no need anymore
+        ///buy_order_list.sema_decrement_diff(); // no need append so decrement diff sema, let others use or just mark its absence/no need anymore
+        buy_order_list.unlock_diff();
         return;
     }
     // fail to execute or rather, fail to fully execute, got remainder
     buy_order_list.add_order(input);
-    buy_order_list.sema_decrement_diff(); // finish appending to buy order list
+    ///buy_order_list.sema_decrement_diff(); // finish appending to buy order list
+    buy_order_list.unlock_diff();
     return;
 }
 
 void InstrumentOrder::sell_action(ClientCommand input){
     buy_order_list.lock_diff();
-    sell_order_list.sema_increment_diff();
+    ///sell_order_list.sema_increment_diff();
+    sell_order_list.lock_diff();
     int selling_result = buy_order_list.try_execute(input);
     if (selling_result == 0){ // succeed and done!
-        sell_order_list.sema_decrement_diff();
+        ///sell_order_list.sema_decrement_diff();
+        sell_order_list.unlock_diff();
         return;
     }
     // fail to execute or rather, fail to fully execute, got remainder
     sell_order_list.add_order(input);
-    sell_order_list.sema_decrement_diff();
+    ///sell_order_list.sema_decrement_diff();
+    sell_order_list.unlock_diff();
     return;
 }
 
