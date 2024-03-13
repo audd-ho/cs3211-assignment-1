@@ -25,12 +25,16 @@ BSOrderList::~BSOrderList(){
 void BSOrderList::sema_increment_diff(){
     int sema_old_val = diff_action_type.load();
     while (true){
-        int sema_new_val = sema_old_val+1;
-        if (diff_action_type.compare_exchange_weak(sema_old_val, sema_new_val))
-        {if (sema_old_val >= 0) {return;}}
+        // cos need check sema_old_value >=0, and dont want update it if CAS fail then make old_value = -1 then issue occurs!!, so want to only execute and TRY CAS if old_value >=0 so need load and check everytime, cos CAS may update to -1 which then, dont allow for CAS cos -1 is not supposed to exchange and update !!!
+        while (sema_old_val >= 0) // if >=0 then can stay in inner loop, just means a lot of same action trying to increment semaphore so need to increase correctly!! with CAS, but only in this loop when old_val >=0, so its just "able to increment, just need increment correctly", and if <0 like -1, then is state of locked by other means, CANNOT INCREMENT, so keep looping load() to try get old_val >=0 then can enter inner while loop and try increment correctly(CAS)!!
+        {
+            int sema_new_val = sema_old_val+1;
+            if (diff_action_type.compare_exchange_weak(sema_old_val, sema_new_val)) {return;}
+        }
+        sema_old_val = diff_action_type.load();
     }
 }
-void BSOrderList::sema_decrement_diff(){
+void BSOrderList::sema_decrement_diff(){ // cos increment already check that >0 so know that when decrement is run, no need check value!!
     int sema_old_val = diff_action_type.load();
     while (true){
         int sema_new_val = sema_old_val-1;
@@ -283,37 +287,48 @@ InstrumentOrder::~InstrumentOrder(){} // need free or delete the lists? cos neve
 void InstrumentOrder::buy_action(ClientCommand input){
     // prevent buy order diff sema from dropping to <0 [read/execute state]
     // keep it at >0 [write/append state]
-    ///buy_order_list.sema_increment_diff(); // may need to append to buy order list later
-    buy_order_list.lock_diff();
+
+    buy_order_list.sema_increment_diff(); // may need to append to buy order list later
+    ///buy_order_list.lock_diff();
 
     sell_order_list.lock_diff();
     int buying_result = sell_order_list.try_execute(input);
     if (buying_result == 0){ // succeed and done!
-        ///buy_order_list.sema_decrement_diff(); // no need append so decrement diff sema, let others use or just mark its absence/no need anymore
-        buy_order_list.unlock_diff();
+
+        buy_order_list.sema_decrement_diff(); // no need append so decrement diff sema, let others use or just mark its absence/no need anymore
+        ///buy_order_list.unlock_diff();
+
         return;
     }
     // fail to execute or rather, fail to fully execute, got remainder
     buy_order_list.add_order(input);
-    ///buy_order_list.sema_decrement_diff(); // finish appending to buy order list
-    buy_order_list.unlock_diff();
+
+    buy_order_list.sema_decrement_diff(); // finish appending to buy order list
+    ///buy_order_list.unlock_diff();
+
     return;
 }
 
 void InstrumentOrder::sell_action(ClientCommand input){
     buy_order_list.lock_diff();
-    ///sell_order_list.sema_increment_diff();
-    sell_order_list.lock_diff();
+
+    sell_order_list.sema_increment_diff();
+    ///sell_order_list.lock_diff();
+
     int selling_result = buy_order_list.try_execute(input);
     if (selling_result == 0){ // succeed and done!
-        ///sell_order_list.sema_decrement_diff();
-        sell_order_list.unlock_diff();
+
+        sell_order_list.sema_decrement_diff();
+        ///sell_order_list.unlock_diff();
+
         return;
     }
     // fail to execute or rather, fail to fully execute, got remainder
     sell_order_list.add_order(input);
-    ///sell_order_list.sema_decrement_diff();
-    sell_order_list.unlock_diff();
+
+    sell_order_list.sema_decrement_diff();
+    ///sell_order_list.unlock_diff();
+
     return;
 }
 
