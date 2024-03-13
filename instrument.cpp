@@ -23,22 +23,22 @@ BSOrderList::~BSOrderList(){
 }
 
 void BSOrderList::sema_increment_diff(){
-    int sema_old_val = diff_action_type.load();
+    int sema_old_val = diff_action_type.load(std::memory_order_acquire);
     while (true){
         // cos need check sema_old_value >=0, and dont want update it if CAS fail then make old_value = -1 then issue occurs!!, so want to only execute and TRY CAS if old_value >=0 so need load and check everytime, cos CAS may update to -1 which then, dont allow for CAS cos -1 is not supposed to exchange and update !!!
         while (sema_old_val >= 0) // if >=0 then can stay in inner loop, just means a lot of same action trying to increment semaphore so need to increase correctly!! with CAS, but only in this loop when old_val >=0, so its just "able to increment, just need increment correctly", and if <0 like -1, then is state of locked by other means, CANNOT INCREMENT, so keep looping load() to try get old_val >=0 then can enter inner while loop and try increment correctly(CAS)!!
         {
             int sema_new_val = sema_old_val+1;
-            if (diff_action_type.compare_exchange_weak(sema_old_val, sema_new_val)) {return;}
+            if (diff_action_type.compare_exchange_weak(sema_old_val, sema_new_val, std::memory_order_acquire)) {return;}
         }
-        sema_old_val = diff_action_type.load();
+        sema_old_val = diff_action_type.load(std::memory_order_acquire);
     }
 }
 void BSOrderList::sema_decrement_diff(){ // cos increment already check that >0 so know that when decrement is run, no need check value!!
-    int sema_old_val = diff_action_type.load();
+    int sema_old_val = diff_action_type.load(std::memory_order_acquire);
     while (true){
         int sema_new_val = sema_old_val-1;
-        if (diff_action_type.compare_exchange_weak(sema_old_val, sema_new_val))
+        if (diff_action_type.compare_exchange_weak(sema_old_val, sema_new_val, std::memory_order_acquire))
         {return;}
     }
 }
@@ -46,14 +46,14 @@ void BSOrderList::lock_diff(){
     int pre_lock_val = 0;
     int locked_val = -1;
     while (true){
-        if (diff_action_type.compare_exchange_weak(pre_lock_val, locked_val))
+        if (diff_action_type.compare_exchange_weak(pre_lock_val, locked_val, std::memory_order_acquire))
         {return;}
         pre_lock_val = 0;
     }
 }
 void BSOrderList::unlock_diff(){ // only one that can increment it so technically no need loop etc(?)
     // unlocked to 0
-    diff_action_type.store(0);
+    diff_action_type.store(0, std::memory_order_release);
     /*
     int locked_val = -1;
     int post_unlocked_val = 0;
@@ -69,13 +69,13 @@ void BSOrderList::spin_lock_same(){
     bool pre_lock_val = false;
     bool locked_val = true;
     while(true){
-        if (same_action_type.compare_exchange_weak(pre_lock_val,locked_val))
+        if (same_action_type.compare_exchange_weak(pre_lock_val,locked_val, std::memory_order_acquire))
         {return;}
         pre_lock_val = false;
     }
 }
 void BSOrderList::spin_unlock_same(){
-    same_action_type.store(false);
+    same_action_type.store(false, std::memory_order_release);
 }
 
 int BSOrderList::try_execute(ClientCommand &input_order){
